@@ -14,13 +14,14 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from agent.philosophy import (  # noqa: E402  # noqa: E402
+from agent.philosophy import (  # noqa: E402
     _OFFLINE_STUB,
     FEWSHOT,
     _normalize_philosophy,
     _normalize_string_list,
     _normalize_text,
     infer_philosophy,
+    render_philosophy_for_prompt,
 )
 
 EXPECTED_KEYS = {"summary", "values", "merge_bar", "direction", "evidence"}
@@ -137,3 +138,66 @@ def test_infer_philosophy_non_dict_context_returns_fresh_copy():
     b = infer_philosophy(None, llm)
     a["summary"] = "mutated"
     assert b["summary"] != "mutated"
+
+
+def _over_cap_philosophy():
+    return {
+        "summary": "A mature library that guards stability and a small dependency surface.",
+        "values": ["conservative", "stability-over-features", "evidence-based"],
+        "merge_bar": "Merges fixes and well-justified changes; rejects new deps.",
+        "direction": "Incremental hardening on the 3.x line.",
+        "evidence": [f"evidence item number {i}: " + ("x" * 80) for i in range(40)],
+    }
+
+
+def test_render_philosophy_for_prompt_is_byte_identical_when_under_cap():
+    philosophy = {
+        "summary": "short",
+        "values": ["a"],
+        "merge_bar": "bar",
+        "direction": "dir",
+        "evidence": ["one"],
+    }
+    expected = json.dumps(philosophy, indent=1)
+    assert len(expected) < 4000
+    assert render_philosophy_for_prompt(philosophy, 4000, indent=1) == expected
+    # Compact dump (review call site) stays byte-identical too.
+    compact = json.dumps(philosophy)
+    assert render_philosophy_for_prompt(philosophy, 1500) == compact
+
+
+def test_render_philosophy_for_prompt_over_cap_keeps_valid_json_and_core_fields():
+    """#1962: hard-slicing mid-evidence produced unterminated JSON in scored prompts."""
+    philosophy = _over_cap_philosophy()
+    full = json.dumps(philosophy, indent=1)
+    assert len(full) > 4000
+
+    for cap in (4000, 3000, 1500):
+        # The old hard-slice path is invalid JSON.
+        try:
+            json.loads(full[:cap])
+            raise AssertionError(f"expected hard-slice at {cap} to be invalid JSON")
+        except json.JSONDecodeError:
+            pass
+
+        rendered = render_philosophy_for_prompt(philosophy, cap, indent=1)
+        assert len(rendered) <= cap
+        parsed = json.loads(rendered)  # must be valid JSON
+        assert parsed["summary"] == philosophy["summary"]
+        assert parsed["values"] == philosophy["values"]
+        assert parsed["merge_bar"] == philosophy["merge_bar"]
+        assert parsed["direction"] == philosophy["direction"]
+        assert isinstance(parsed["evidence"], list)
+        assert len(parsed["evidence"]) < len(philosophy["evidence"])
+
+    # Input philosophy is not mutated — solve()'s returned object stays intact.
+    assert len(philosophy["evidence"]) == 40
+
+
+def test_render_philosophy_for_prompt_review_compact_over_cap():
+    philosophy = _over_cap_philosophy()
+    rendered = render_philosophy_for_prompt(philosophy, 1500)
+    assert len(rendered) <= 1500
+    parsed = json.loads(rendered)
+    assert parsed["summary"] == philosophy["summary"]
+    assert isinstance(parsed["evidence"], list)

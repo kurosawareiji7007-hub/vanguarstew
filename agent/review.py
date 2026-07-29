@@ -10,8 +10,9 @@ before/after `scripts/score_pr_delta.py` run this code has no access to.
 
 from __future__ import annotations
 
-import json
 import logging
+
+from agent.philosophy import render_philosophy_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,8 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     touches_agent = any(f == "agent.py" or f.startswith("agent/") for f in files)
     number = _pr_number(pr)
     user = (
-        (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
+        (f"Repository philosophy:\n{render_philosophy_for_prompt(philosophy, 1500)}\n\n"
+         if philosophy is not None else "")
         + f"PULL REQUEST #{number if number is not None else '?'}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"

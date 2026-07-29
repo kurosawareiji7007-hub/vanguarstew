@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timezone
 
 from agent.context import context_for_agent
+from agent.philosophy import render_philosophy_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -1025,7 +1026,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
     user = (
-        f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
+        f"Repository philosophy:\n"
+        f"{render_philosophy_for_prompt(philosophy, 4000, indent=1)}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"

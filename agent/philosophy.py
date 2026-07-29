@@ -126,6 +126,54 @@ def infer_philosophy(context: dict, llm) -> dict:
     return _normalize_philosophy(out, _OFFLINE_STUB)
 
 
+def render_philosophy_for_prompt(philosophy, max_chars: int, *, indent=None) -> str:
+    """Serialize a philosophy for an agent prompt without mid-string JSON truncation.
+
+    Prompt sites used to hard-slice ``json.dumps(philosophy)[:N]``, which cuts inside the
+    trailing ``evidence`` list and feeds the model an unterminated JSON fragment (#1962).
+    This helper:
+
+    1. Returns the serialization byte-identical when it already fits ``max_chars``.
+    2. Otherwise drops whole trailing ``evidence`` entries until it fits (keeps
+       ``summary`` / ``values`` / ``merge_bar`` / ``direction`` intact).
+    3. Falls back to a hard slice only when even an empty-``evidence`` shape cannot fit.
+
+    Does not mutate ``philosophy`` — the object ``solve()`` returns is unchanged. ``indent``
+    matches each call site (``1`` for planner/decider, ``None`` for review's compact dump).
+    """
+    if not isinstance(max_chars, int) or max_chars < 0:
+        max_chars = 0
+
+    def _dumps(obj) -> str:
+        if indent is None:
+            return json.dumps(obj)
+        return json.dumps(obj, indent=indent)
+
+    if not isinstance(philosophy, dict):
+        return _dumps({})[:max_chars]
+
+    full = _dumps(philosophy)
+    if len(full) <= max_chars:
+        return full
+
+    evidence = philosophy.get("evidence")
+    if isinstance(evidence, list) and evidence:
+        trimmed = dict(philosophy)
+        remaining = list(evidence)
+        while remaining:
+            remaining.pop()
+            trimmed["evidence"] = remaining
+            candidate = _dumps(trimmed)
+            if len(candidate) <= max_chars:
+                return candidate
+        trimmed["evidence"] = []
+        candidate = _dumps(trimmed)
+        if len(candidate) <= max_chars:
+            return candidate
+
+    return full[:max_chars]
+
+
 def _render(context: dict) -> str:
     ctx = context_for_agent(context)
     keep = {k: ctx.get(k) for k in (
